@@ -1,0 +1,2 @@
+lr,l2_cost,training_set,score,worst_group_score
+0.0001,1e-05,0,0.9644998894116701,0.38235295
