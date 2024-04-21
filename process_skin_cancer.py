@@ -77,9 +77,11 @@ def create_final_sample(df):
 
 
 def loss_weights(df):
+    # Cancer = 1, white = 1
 
     labels = torch.tensor(df['cancer'].to_numpy().astype(float))
     auxiliary_labels = torch.tensor(df['aux_label'].to_numpy().astype(float))
+    torch.set_printoptions(threshold=10_000)
 
     pos_label_pos_aux_weight = torch.sum(labels * auxiliary_labels) / torch.sum(auxiliary_labels)
     neg_label_pos_aux_weight = torch.sum((1.0 - labels) * auxiliary_labels) / torch.sum(auxiliary_labels)
@@ -277,11 +279,11 @@ def generate_skin_cancer(train_dist, test_dists, seed=None):
             test_df_dist.drop(i, inplace=True)
 
         # Add weights to datasets
-        test_df_dist = loss_weights(test_df_dist)
+        # test_df_dist = loss_weights(test_df_dist)
 
         # Save the csv files
         test_df_dist.to_csv(os.path.join(testing_dir, str(test_dist), 'testing.csv'))
 
 
 if __name__ == "__main__":
-    generate_skin_cancer(0.9, [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], 4)
+    generate_skin_cancer(0.95, [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], 4)

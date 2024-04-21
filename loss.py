@@ -212,118 +212,118 @@ class LossComputer:
 
 
 
-class Weighted_MMD(torch.nn.Module):
-    '''
-    Used for calcuting the Weigted MMD loss. The paper describing this
-    loss function can be found here:
-    https://proceedings.mlr.press/v151/makar22a/makar22a.pdf
-    '''
+# kernel width using median trick
+def set_width_median(x, y=None):
+    if y == None:
+        x = x.detach().cpu().numpy()
+        dists = pdist(x, 'euclidean')
+        median_dist = np.median(dists[dists > 0])
+    else:
+        x = x.detach().cpu().numpy()
+        y = y.detach().cpu().numpy()
+        dists = cdist(x, y, 'euclidean')
+        median_dist = np.median(dists[dists > 0])
 
+    width = np.sqrt(2.) * median_dist
+    gamma = - 0.5 / (width ** 2)
+    return gamma
+
+
+
+def rbf_kernel(x, y=None, mmd_sigma='median'):
+    if y is not None:
+        x_norm = (x ** 2).sum(1).view(-1, 1)
+        y_norm = (y ** 2).sum(1).view(1, -1)
+        kernel_matrix = torch.clamp(x_norm + y_norm - 2.0 * x @ y.T, min=0)
+    else:
+        norm = torch.sum(x**2, axis=-1)
+        kernel_matrix = norm[:, None] + norm[None, :] - 2 * torch.matmul(x, torch.transpose(x, dim0=1, dim1=0))
+    set_width_median(x, y)
+    if mmd_sigma == 'median':
+        gamma = set_width_median(x, y)
+    else:
+        gamma = - 0.5 / (mmd_sigma ** 2)
+    kernel_matrix = torch.exp(gamma * kernel_matrix)
+
+    return kernel_matrix
+
+
+
+class Weighted_MMD(torch.nn.Module):
     def __init__(self, mmd_sigma):
         super(Weighted_MMD, self).__init__()
         self.mmd_sigma = mmd_sigma
 
-
-    def rbf_kernel(self, x, y=None):
-        if y is not None:
-            x_norm = (x ** 2).sum(1).view(-1, 1)
-            y_norm = (y ** 2).sum(1).view(1, -1)
-            kernel_matrix = torch.clamp(x_norm + y_norm - 2.0 * x @ y.T, min=0)
-        else:
-            norm = torch.sum(x**2, axis=-1)
-            kernel_matrix = norm[:, None] + norm[None, :] - 2 * torch.matmul(x, torch.transpose(x, dim0=1, dim1=0))
-
-        gamma = - 0.5 / (self.mmd_sigma ** 2)
-        kernel_matrix = torch.exp(gamma * kernel_matrix)
-
-        return kernel_matrix
-
-
     def loss_weights(self, labels, auxiliary_labels):
-
-        pos_label_pos_aux_weight = torch.sum(labels * auxiliary_labels) / torch.sum(auxiliary_labels)
-        neg_label_pos_aux_weight = torch.sum((1.0 - labels) * auxiliary_labels) / torch.sum(auxiliary_labels)
-
-        pos_label_neg_aux_weight = torch.sum(labels * (1.0 - auxiliary_labels)) / torch.sum((1.0 - auxiliary_labels))
-        neg_label_neg_aux_weight = torch.sum((1.0 - labels) * (1.0 - auxiliary_labels)) / torch.sum((1.0 - auxiliary_labels))
-
-        # Positive weights
-        weights_pos = labels * pos_label_pos_aux_weight + (1.0 - labels) * neg_label_pos_aux_weight
-        weights_pos = 1 / weights_pos
-        weights_pos = auxiliary_labels * weights_pos
-        weights_pos = torch.mean(labels) * labels * weights_pos + \
-            torch.mean(1 - labels) * (1.0 - labels) * weights_pos
+        label_size = labels.size()[0]
         
-        # Negative weights
-        weights_neg = labels * pos_label_neg_aux_weight + (1.0 - auxiliary_labels) * neg_label_neg_aux_weight
-        weights_neg = 1.0 / weights_neg
-        weights_neg = (1.0 - auxiliary_labels) * weights_neg
-        weights_neg = torch.mean(labels) * labels * weights_neg + \
-            torch.mean(1.0 - labels) * (1.0 - labels) * weights_neg
-        
-        # Make sure there are no nan errors
-        weights_pos = torch.nan_to_num(weights_pos)
-        weights_neg = torch.nan_to_num(weights_neg)
-        weights = weights_pos + weights_neg
+        labels = torch.squeeze(labels)
 
-        return weights, weights_pos, weights_neg
+        labels = labels.to(dtype=torch.float32)
+        auxiliary_labels = auxiliary_labels.to(dtype=torch.float32)
+
+        p_cancer_white = torch.dot(labels, auxiliary_labels) / label_size
+        p_cancer_black = torch.dot(labels, 1 - auxiliary_labels) / label_size
+        p_benign_white = torch.dot(1 - labels, auxiliary_labels) / label_size
+        p_benign_black = torch.dot(1 - labels, 1 - auxiliary_labels) / label_size
+
+        p_cancer = torch.sum(labels) / label_size
+        p_benign= torch.sum(1 - labels) / label_size
+
+        p_white = torch.sum(auxiliary_labels) / label_size
+        p_black = torch.sum(1 - auxiliary_labels) / label_size
+
+        cancer_white_weight = p_cancer * p_white / p_cancer_white if p_cancer_white != 0 else 0
+        cancer_black_weight = p_cancer * p_black / p_cancer_black if p_cancer_black != 0 else 0
+        benign_white_weight = p_benign * p_white / p_benign_white if p_benign_white != 0 else 0
+        benign_black_weight = p_benign * p_black / p_benign_black if p_benign_black != 0 else 0
+
+        cancer_white_vector = cancer_white_weight * labels * auxiliary_labels
+        cancer_black_vector = cancer_black_weight * labels * (1 - auxiliary_labels)
+        benign_white_vector = benign_white_weight * (1 - labels) * auxiliary_labels
+        benign_black_vector = benign_black_weight * (1 - labels) * (1 - auxiliary_labels)
+
+        weight_vector = cancer_white_vector + cancer_black_vector + benign_white_vector + benign_black_vector
+        weight_vector = weight_vector / torch.sum(weight_vector)
+
+        return weight_vector
 
 
-    def mmd(self, features, auxiliary_labels, weights_pos, weights_neg):
+    def mmd(self, features, auxiliary_labels, rand_perm=False):
+        features = features # Features are wrapped inside of a size 1 tuple
+        auxiliary_labels = torch.unsqueeze(auxiliary_labels, dim=1).to(dtype=torch.float32) # Shape = (num_labels, 1)
 
-        kernel_matrix = self.rbf_kernel(features)
-
+        kernel_matrix = rbf_kernel(features, mmd_sigma=self.mmd_sigma)
         mask_pos = torch.matmul(auxiliary_labels, torch.transpose(auxiliary_labels, dim0=1, dim1=0))
         mask_neg = torch.matmul(1 - auxiliary_labels, torch.transpose(1 - auxiliary_labels, dim0=1, dim1=0))
         mask_pos_neg = torch.matmul(auxiliary_labels, torch.transpose(1 - auxiliary_labels, dim0=1, dim1=0))
-        mask_neg_pos = torch.matmul(1 - auxiliary_labels, torch.transpose(auxiliary_labels, dim0=1, dim1=0))
 
-        pos_kernel_mean = kernel_matrix * mask_pos
-        pos_kernel_mean = pos_kernel_mean * torch.transpose(weights_pos, dim0=1, dim1=0)
-        pos_kernel_mean = torch.divide(torch.sum(pos_kernel_mean, dim=1), torch.sum(weights_pos))
-        pos_kernel_mean = torch.divide(torch.sum(pos_kernel_mean * torch.squeeze(weights_pos)), torch.sum(weights_pos))
+        weight_pos = 1 / torch.sum(mask_pos) if torch.sum(mask_pos) != 0 else 0
+        weight_neg = 1 / torch.sum(mask_neg) if torch.sum(mask_neg) != 0 else 0
+        weight_pos_neg = 1 / torch.sum(mask_pos_neg) if torch.sum(mask_pos_neg) != 0 else 0
 
-        neg_kernel_mean = kernel_matrix * mask_neg
-        neg_kernel_mean = neg_kernel_mean * torch.transpose(weights_neg, dim0=1, dim1=0)
-        neg_kernel_mean = torch.divide(torch.sum(neg_kernel_mean, dim=1), torch.sum(weights_neg))
-        neg_kernel_mean = torch.divide(torch.sum(neg_kernel_mean * torch.squeeze(weights_neg)), torch.sum(weights_neg))
+        mean_pos = weight_pos * torch.sum(kernel_matrix * mask_pos)
+        mean_neg = weight_neg * torch.sum(kernel_matrix * mask_neg)
+        mean_pos_neg = weight_pos_neg * torch.sum(kernel_matrix * mask_pos_neg)
 
-        neg_pos_kernel_mean = kernel_matrix * mask_neg_pos
-        neg_pos_kernel_mean = neg_pos_kernel_mean * torch.transpose(weights_pos, dim0=1, dim1=0)
-        neg_pos_kernel_mean = torch.divide(torch.sum(neg_pos_kernel_mean, dim=1), torch.sum(weights_pos))
-        neg_pos_kernel_mean = torch.divide(torch.sum(neg_pos_kernel_mean * torch.squeeze(weights_neg)), torch.sum(weights_neg))
+        mmd = mean_pos + mean_neg - 2 * mean_pos_neg
+        mmd = torch.max(torch.tensor(0), mmd)
 
-        pos_neg_kernel_mean = kernel_matrix * mask_pos_neg
-        pos_neg_kernel_mean = pos_neg_kernel_mean * torch.transpose(weights_neg, dim0=1, dim1=0)
-        pos_neg_kernel_mean = torch.divide(torch.sum(pos_neg_kernel_mean, dim=1), torch.sum(weights_neg))
-        pos_neg_kernel_mean = torch.divide(torch.sum(pos_neg_kernel_mean * torch.squeeze(weights_pos)), torch.sum(weights_pos))
-
-        mmd_loss = pos_kernel_mean + neg_kernel_mean - (pos_neg_kernel_mean + neg_pos_kernel_mean)
-        mmd_loss = torch.max(torch.tensor(0), mmd_loss)
-
-        return mmd_loss
+        return mmd
 
 
-    def forward(self, yhat, y, features, z):
-        # Get weights and auxiliary labels
-        auxiliary_labels = z[:, 0]
-        weights = z[:, 1]
-        weights_pos = z[:, 2]
-        weights_neg = z[:, 3]
 
+    def forward(self, yhat, y, features, auxiliary_labels):
         # Calculate cross entropy loss
         ce_loss_function = torch.nn.BCELoss(reduction='none')
         ce_loss = ce_loss_function(yhat, y)
 
         # Calculate weighted cross entropy loss
-        weighted_ce_loss = weights * ce_loss
-        weighted_ce_loss = torch.sum(weighted_ce_loss) / torch.sum(weights)
+        weight_vector = self.loss_weights(y, auxiliary_labels)
+        ce_loss = torch.squeeze(ce_loss)
+        weighted_ce_loss = torch.dot(ce_loss, weight_vector)
 
         # Calculate the mmd loss
-        auxiliary_labels = torch.unsqueeze(auxiliary_labels, dim=1)
-        weights_pos = torch.unsqueeze(weights_pos, dim=1)
-        weights_neg = torch.unsqueeze(weights_neg, dim=1)
-        mmd_loss = self.mmd(features, auxiliary_labels, weights_pos, weights_neg)
-        mmd_loss = 0
+        mmd_loss = self.mmd(features, auxiliary_labels)
 
         return mmd_loss, weighted_ce_loss

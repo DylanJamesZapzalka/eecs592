@@ -55,18 +55,6 @@ class SkinCancerDataset(Dataset):
         aux_label = self.csv_df.iloc[idx]['aux_label']
         aux_label = torch.tensor(aux_label)
 
-        # Obtain weights
-        if self.include_aux:
-            weights = self.csv_df.iloc[idx]['weights']
-            weights = torch.tensor(weights)
-            weights_pos = self.csv_df.iloc[idx]['weights_pos']
-            weights_pos = torch.tensor(weights_pos)
-            weights_neg = self.csv_df.iloc[idx]['weights_neg']
-            weights_neg = torch.tensor(weights_neg)
-
-            # Combain weights and auxiliary labels
-            aux_label = torch.stack((aux_label, weights, weights_pos, weights_neg), dim=0)
-
         # Obtain bird segmentation
         lesion_segmentation = Image.open(self.csv_df.iloc[idx]['mediator_img_location'])
         lesion_segmentation = img_transform(lesion_segmentation).to(dtype=torch.float32) / 255.0

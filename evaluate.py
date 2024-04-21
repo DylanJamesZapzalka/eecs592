@@ -100,7 +100,10 @@ for i in TEST_DISTRIBUTIONS:
     columns.append(str(i))
 results_df = pd.DataFrame(columns = columns)
 
+print(num_datasets)
 for random_seed in tqdm(range(num_datasets), position=0, desc='Random Seeds'):
+
+    print(random_seed)
 
     # Get parameters for corresponding dataset
     if model_name == 'l2' or model_name == 'gdro':
@@ -112,6 +115,7 @@ for random_seed in tqdm(range(num_datasets), position=0, desc='Random Seeds'):
         teacher_lr = args.student_lr[random_seed]
         teacher_l2_cost = args.student_l2_cost[random_seed]
     elif model_name == 'mmd':
+        lr = args.lr[random_seed]
         sigma = args.sigma[random_seed]
         alpha = args.alpha[random_seed]
 

@@ -4,16 +4,21 @@ import matplotlib.pyplot as plt
 import os
 
 
-CSV_FILES = ['/home/dylanz/eecs592/results/evaluation/l2_1711844373.2195396']
+CSV_FILES = ['/home/dylanz/eecs592/results/evaluation/l2_0.95',
+            '/home/dylanz/eecs592/results/evaluation/mmd_0.95',
+            '/home/dylanz/eecs592/results/evaluation/gdro_0.95',
+            '/home/dylanz/eecs592/results/evaluation/tipmi-cf_0.95'
+            ]
+
 COLORS = ["#fd7f6f", "#7eb0d5", "#b2e061", "#bd7ebe", "#ffb55a", "#ffee65", "#beb9db", "#fdcce5", "#8bd3c7"]
-LABELS = ['L2']
-TRAINING_DIST = 0.9
-FIGURE_NAME = 'l2-biased-skin-cancer.png'
+LABELS = ['L2', 'MMD', 'GDRO', 'TIPMI']
+TRAINING_DIST = 0.95
+FIGURE_NAME = 'skin-cancer-0.95.png'
 RESULTS_DIR = '/home/dylanz'
-TITLE = 'L2 Regularization Performance'
+TITLE = 'Skin Cancer Distribution Shift Performance'
 Y_LABEL = 'AUROC'
-X_LABEL = 'P(Skin Cancer | White Skin) = P(Benign Lesion | Dark Skin)'
-#X_LABEL = 'P(OA | Black Square) = P(Healthy | No Black Square) = 1.0'
+X_LABEL = 'P(Skin Cancer | Light Skin) = P(Benign Lesion | Dark Skin)'
+
 
 
 for i in range(len(CSV_FILES)):
